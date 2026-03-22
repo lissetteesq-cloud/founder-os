@@ -1,6 +1,8 @@
+import 'dart:convert';
+
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -10,6 +12,7 @@ import 'models/founder_models.dart';
 import 'services/chat_export_service.dart';
 import 'services/founder_os_sync_service.dart';
 import 'services/founder_tutor_service.dart';
+import 'services/founder_voice_service.dart';
 import 'state/founder_os_controller.dart';
 import 'theme/app_theme.dart';
 
@@ -762,17 +765,20 @@ class _TutorConversationPanel extends StatefulWidget {
 
 class _TutorConversationPanelState extends State<_TutorConversationPanel> {
   final FounderTutorService _tutorService = const FounderTutorService();
+  final FounderVoiceService _voiceService = const FounderVoiceService();
   final SpeechToText _speechToText = SpeechToText();
-  final FlutterTts _tts = FlutterTts();
+  final AudioPlayer _audioPlayer = AudioPlayer();
   final List<_TutorMessage> _messages = <_TutorMessage>[];
   late final TextEditingController _promptController;
   bool _isSending = false;
   bool _speechReady = false;
   bool _isListening = false;
   bool _autoReadReplies = false;
+  bool _isSpeaking = false;
   String? _error;
   String? _lastLessonId;
   TutorProvider _provider = TutorProvider.openAi;
+  String _selectedVoice = 'sage';
 
   @override
   void initState() {
@@ -784,7 +790,7 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
   @override
   void dispose() {
     _speechToText.stop();
-    _tts.stop();
+    _audioPlayer.dispose();
     _promptController.dispose();
     super.dispose();
   }
@@ -861,6 +867,37 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
             _provider == TutorProvider.openAi
                 ? 'Use OpenAI for reasoning, logic, app review, structured decision support, and implementation analysis.'
                 : 'Use Gemini for distribution, SEO, hooks, messaging, channel thinking, and creative support with the same lesson and app context.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 12),
+          InputDecorator(
+            decoration: const InputDecoration(
+              labelText: 'Natural voice playback',
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: _selectedVoice,
+                isExpanded: true,
+                items: const [
+                  DropdownMenuItem(value: 'sage', child: Text('Sage')),
+                  DropdownMenuItem(value: 'coral', child: Text('Coral')),
+                  DropdownMenuItem(value: 'alloy', child: Text('Alloy')),
+                  DropdownMenuItem(value: 'nova', child: Text('Nova')),
+                  DropdownMenuItem(value: 'ash', child: Text('Ash')),
+                  DropdownMenuItem(value: 'ballad', child: Text('Ballad')),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    _selectedVoice = value;
+                  });
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Reply playback uses model-generated audio from OpenAI, not the device voice engine.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
@@ -1007,7 +1044,7 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
                     ? _speakLatestReply
                     : null,
                 icon: const Icon(Icons.volume_up_outlined),
-                label: const Text('Read Reply'),
+                label: Text(_isSpeaking ? 'Playing...' : 'Read Reply'),
               ),
               OutlinedButton.icon(
                 onPressed: _stopVoice,
@@ -1076,10 +1113,12 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
           });
         },
       );
-      await _tts.setLanguage('en-US');
-      await _tts.setSpeechRate(0.45);
-      await _tts.setPitch(1.0);
-      await _tts.awaitSpeakCompletion(true);
+      _audioPlayer.onPlayerComplete.listen((_) {
+        if (!mounted) return;
+        setState(() {
+          _isSpeaking = false;
+        });
+      });
       if (!mounted) return;
       setState(() {
         _speechReady = ready;
@@ -1149,17 +1188,40 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
       orElse: () => const _TutorMessage(role: 'assistant', text: ''),
     );
     if (latestReply.text.trim().isEmpty) return;
-    await _tts.stop();
-    await _tts.speak(latestReply.text);
+    await _playNaturalVoice(latestReply.text);
   }
 
   Future<void> _stopVoice() async {
     await _speechToText.stop();
-    await _tts.stop();
+    await _audioPlayer.stop();
     if (!mounted) return;
     setState(() {
       _isListening = false;
+      _isSpeaking = false;
     });
+  }
+
+  Future<void> _playNaturalVoice(String text) async {
+    try {
+      setState(() {
+        _error = null;
+        _isSpeaking = true;
+      });
+      final reply = await _voiceService.synthesize(
+        text: text,
+        voice: _selectedVoice,
+      );
+      final bytes = base64Decode(reply.audioBase64);
+      await _audioPlayer.stop();
+      await _audioPlayer.play(BytesSource(bytes));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isSpeaking = false;
+        _error =
+            'Natural voice playback failed. Make sure the founder-voice function is deployed and OPENAI_API_KEY is present. Technical detail: $error';
+      });
+    }
   }
 
   String _buildTranscriptMarkdown() {
