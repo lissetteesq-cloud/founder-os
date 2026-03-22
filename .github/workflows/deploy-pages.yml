@@ -39,7 +39,7 @@ jobs:
         run: flutter test
 
       - name: Build web
-        run: flutter build web --release --base-href /founder-os/
+        run: flutter build web --release --base-href /founder-os/ --pwa-strategy=none
 
       - name: Disable Jekyll
         run: touch build/web/.nojekyll
