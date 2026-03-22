@@ -797,8 +797,7 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
 
   @override
   Widget build(BuildContext context) {
-    if (_lastLessonId != widget.lesson.id ||
-        _promptController.text.trim().isEmpty) {
+    if (_lastLessonId != widget.lesson.id) {
       final starter =
           'Explain "${widget.lesson.title}" to me in plain English, then tell me what I should do in LunarWise right now.';
       _lastLessonId = widget.lesson.id;
@@ -1015,12 +1014,31 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
             decoration: InputDecoration(
               hintText:
                   'Ask anything. Examples: "search my app", "review my homepage", "run an SEO audit", "generate 15 hooks", "analyze this data: ..."',
-              suffixIcon: IconButton(
-                onPressed: _speechReady ? _toggleListening : null,
-                icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
-                tooltip: _isListening ? 'Stop dictation' : 'Start dictation',
+              suffixIcon: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    onPressed: _promptController.text.trim().isEmpty
+                        ? null
+                        : () {
+                            setState(() {
+                              _promptController.clear();
+                            });
+                          },
+                    icon: const Icon(Icons.clear),
+                    tooltip: 'Clear input',
+                  ),
+                  IconButton(
+                    onPressed: _speechReady ? _toggleListening : null,
+                    icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
+                    tooltip: _isListening
+                        ? 'Stop dictation'
+                        : 'Start dictation',
+                  ),
+                ],
               ),
             ),
+            onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 12),
           Wrap(
@@ -1031,6 +1049,18 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
                 onPressed: () => _copyPrompt(context),
                 icon: const Icon(Icons.content_copy),
                 label: const Text('Copy Prompt'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _messages.isEmpty
+                    ? null
+                    : () {
+                        setState(() {
+                          _messages.clear();
+                          _error = null;
+                        });
+                      },
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Clear Chat'),
               ),
               OutlinedButton.icon(
                 onPressed: _messages.isEmpty

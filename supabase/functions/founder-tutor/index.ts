@@ -57,7 +57,7 @@ function shouldSearchWeb(text: string) {
 function detectCommandModes(text: string): CommandModes {
   return {
     appInspection:
-      /(my app|lunarwise|review my app|search my app|analyze my app|analyze my homepage|review my homepage|homepage|landing page|live app|site\b)/i.test(
+      /(my app|review my app|search my app|analyze my app|analyze my homepage|review my homepage|homepage|landing page|live app|my site|our site|website audit)/i.test(
         text,
       ),
     seo:
@@ -101,7 +101,7 @@ function buildSearchQueries(
   const queries = new Set<string>();
   queries.add(question);
 
-  if (modes.appInspection || modes.search) {
+  if (modes.appInspection) {
     queries.add(`${projectName} app`);
   }
 
@@ -318,6 +318,7 @@ Your job:
 - when the user gives a command, execute the command with the provided tools and inspected context before teaching
 - treat "my app" as the user's deployed app URL when available
 - treat "my repo" as the linked GitHub repository when available
+- if the user asks to search the web or do research, perform broad web research first and do not redirect the search toward the repo or app unless the user explicitly asked for app or repo review
 
 Output rules:
 - do not sound like marketing copy
@@ -330,6 +331,7 @@ Output rules:
 - do not mention that you are an AI model
 - do not ignore command words like search, review, analyze, audit, compare, generate, or inspect
 - if you inspected URLs or search results, say exactly what you inspected
+- if the user asked for web research, lead with the web findings instead of lesson context
 - if the user asks for SEO, include: findings, why each issue matters, and prioritized fixes
 - if the user asks for hooks or copy, produce multiple options instead of one
 - if the user asks for data analysis, summarize assumptions, observed patterns, and recommended actions
