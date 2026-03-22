@@ -217,6 +217,7 @@ async function callOpenAi(
   apiKey: string,
   systemPrompt: string,
   userPrompt: string,
+  enableWebSearch: boolean,
 ) {
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
@@ -226,6 +227,7 @@ async function callOpenAi(
     },
     body: JSON.stringify({
       model: 'gpt-4.1-mini',
+      tools: enableWebSearch ? [{ type: 'web_search' }] : undefined,
       input: [
         {
           role: 'system',
@@ -258,6 +260,7 @@ async function callGemini(
   apiKey: string,
   systemPrompt: string,
   userPrompt: string,
+  enableWebSearch: boolean,
 ) {
   const response = await fetch(
     'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
@@ -277,6 +280,7 @@ async function callGemini(
             parts: [{ text: userPrompt }],
           },
         ],
+        tools: enableWebSearch ? [{ google_search: {} }] : undefined,
       }),
     },
   );
@@ -352,6 +356,13 @@ Additional style for OpenAI mode:
 `.trim();
 
     const modes = detectCommandModes(question);
+    const enableProviderSearch =
+      modes.search ||
+      modes.appInspection ||
+      modes.seo ||
+      modes.hooks ||
+      modes.dataAnalysis ||
+      modes.competitorReview;
     const appUrl = safeUrl(body.appUrl);
     const repoUrl = safeUrl(body.repoUrl);
     const linkedUrls = extractUrls(question);
@@ -495,7 +506,12 @@ ${question}
           500,
         );
       }
-      answer = await callGemini(geminiApiKey, fullSystemPrompt, userPrompt);
+      answer = await callGemini(
+        geminiApiKey,
+        fullSystemPrompt,
+        userPrompt,
+        enableProviderSearch,
+      );
     } else {
       const openAiApiKey = Deno.env.get('OPENAI_API_KEY');
       if (!openAiApiKey) {
@@ -504,7 +520,12 @@ ${question}
           500,
         );
       }
-      answer = await callOpenAi(openAiApiKey, fullSystemPrompt, userPrompt);
+      answer = await callOpenAi(
+        openAiApiKey,
+        fullSystemPrompt,
+        userPrompt,
+        enableProviderSearch,
+      );
     }
 
     if (!answer || typeof answer !== 'string') {
