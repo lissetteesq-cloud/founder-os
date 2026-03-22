@@ -1,6 +1,3 @@
-import 'dart:convert';
-
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_to_text.dart';
@@ -12,7 +9,7 @@ import 'models/founder_models.dart';
 import 'services/chat_export_service.dart';
 import 'services/founder_os_sync_service.dart';
 import 'services/founder_tutor_service.dart';
-import 'services/founder_voice_service.dart';
+import 'services/founder_voice_playback_controller.dart';
 import 'state/founder_os_controller.dart';
 import 'theme/app_theme.dart';
 
@@ -55,6 +52,8 @@ class FounderOsShell extends StatefulWidget {
 
 class _FounderOsShellState extends State<FounderOsShell> {
   int _currentIndex = 0;
+  final FounderVoicePlaybackController _voicePlayback =
+      FounderVoicePlaybackController.instance;
 
   void _openLearnForModule(String moduleId, {String? lessonId}) {
     widget.controller.setSelectedModule(moduleId);
@@ -113,7 +112,28 @@ class _FounderOsShellState extends State<FounderOsShell> {
           ),
         ],
       ),
-      body: IndexedStack(index: _currentIndex, children: pages),
+      body: Stack(
+        children: [
+          IndexedStack(index: _currentIndex, children: pages),
+          AnimatedBuilder(
+            animation: _voicePlayback,
+            builder: (context, _) {
+              if (!_voicePlayback.isVisible) {
+                return const SizedBox.shrink();
+              }
+              return Positioned(
+                top: 12,
+                left: 16,
+                right: 16,
+                child: SafeArea(
+                  bottom: false,
+                  child: _VoicePlayerPill(controller: _voicePlayback),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (value) => setState(() => _currentIndex = value),
@@ -765,16 +785,15 @@ class _TutorConversationPanel extends StatefulWidget {
 
 class _TutorConversationPanelState extends State<_TutorConversationPanel> {
   final FounderTutorService _tutorService = const FounderTutorService();
-  final FounderVoiceService _voiceService = const FounderVoiceService();
+  final FounderVoicePlaybackController _voicePlayback =
+      FounderVoicePlaybackController.instance;
   final SpeechToText _speechToText = SpeechToText();
-  final AudioPlayer _audioPlayer = AudioPlayer();
   final List<_TutorMessage> _messages = <_TutorMessage>[];
   late final TextEditingController _promptController;
   bool _isSending = false;
   bool _speechReady = false;
   bool _isListening = false;
   bool _autoReadReplies = false;
-  bool _isSpeaking = false;
   String? _error;
   String? _lastLessonId;
   TutorProvider _provider = TutorProvider.openAi;
@@ -790,7 +809,6 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
   @override
   void dispose() {
     _speechToText.stop();
-    _audioPlayer.dispose();
     _promptController.dispose();
     super.dispose();
   }
@@ -1074,7 +1092,9 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
                     ? _speakLatestReply
                     : null,
                 icon: const Icon(Icons.volume_up_outlined),
-                label: Text(_isSpeaking ? 'Playing...' : 'Read Reply'),
+                label: Text(
+                  _voicePlayback.isLoading ? 'Loading...' : 'Read Reply',
+                ),
               ),
               OutlinedButton.icon(
                 onPressed: _stopVoice,
@@ -1143,12 +1163,6 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
           });
         },
       );
-      _audioPlayer.onPlayerComplete.listen((_) {
-        if (!mounted) return;
-        setState(() {
-          _isSpeaking = false;
-        });
-      });
       if (!mounted) return;
       setState(() {
         _speechReady = ready;
@@ -1218,40 +1232,21 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
       orElse: () => const _TutorMessage(role: 'assistant', text: ''),
     );
     if (latestReply.text.trim().isEmpty) return;
-    await _playNaturalVoice(latestReply.text);
+    await _voicePlayback.loadReply(
+      text: latestReply.text,
+      voice: _selectedVoice,
+      title: 'Tutor reply',
+      autoPlay: false,
+    );
   }
 
   Future<void> _stopVoice() async {
     await _speechToText.stop();
-    await _audioPlayer.stop();
+    await _voicePlayback.stop();
     if (!mounted) return;
     setState(() {
       _isListening = false;
-      _isSpeaking = false;
     });
-  }
-
-  Future<void> _playNaturalVoice(String text) async {
-    try {
-      setState(() {
-        _error = null;
-        _isSpeaking = true;
-      });
-      final reply = await _voiceService.synthesize(
-        text: text,
-        voice: _selectedVoice,
-      );
-      final bytes = base64Decode(reply.audioBase64);
-      await _audioPlayer.stop();
-      await _audioPlayer.play(BytesSource(bytes));
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _isSpeaking = false;
-        _error =
-            'Natural voice playback failed. Make sure the founder-voice function is deployed and OPENAI_API_KEY is present. Technical detail: $error';
-      });
-    }
   }
 
   String _buildTranscriptMarkdown() {
@@ -1357,7 +1352,12 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
         _isSending = false;
       });
       if (_autoReadReplies) {
-        await _speakLatestReply();
+        await _voicePlayback.loadReply(
+          text: '[${_provider.label}] ${reply.answer}',
+          voice: _selectedVoice,
+          title: 'Tutor reply',
+          autoPlay: true,
+        );
       }
     } catch (error) {
       if (!mounted) return;
@@ -1377,6 +1377,101 @@ class _TutorMessage {
   final String text;
 
   bool get isUser => role == 'user';
+}
+
+class _VoicePlayerPill extends StatelessWidget {
+  const _VoicePlayerPill({required this.controller});
+
+  final FounderVoicePlaybackController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceRaised.withValues(alpha: 0.78),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: AppColors.ghost),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black38,
+              blurRadius: 18,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Icon(
+              controller.isLoading
+                  ? Icons.graphic_eq
+                  : controller.isPlaying
+                  ? Icons.volume_up
+                  : Icons.headphones,
+              color: AppColors.accent,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    controller.isLoading
+                        ? 'Preparing natural voice'
+                        : controller.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    controller.error != null
+                        ? 'Playback blocked or failed. Press play to retry.'
+                        : controller.isLoading
+                        ? 'Generating ${controller.voice} voice audio...'
+                        : 'Voice: ${controller.voice}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              onPressed: controller.isLoading
+                  ? null
+                  : controller.isPlaying
+                  ? controller.pause
+                  : controller.hasAudio
+                  ? controller.play
+                  : null,
+              icon: Icon(controller.isPlaying ? Icons.pause : Icons.play_arrow),
+              tooltip: controller.isPlaying ? 'Pause' : 'Play',
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              onPressed: controller.hasAudio ? controller.stop : null,
+              icon: const Icon(Icons.stop),
+              tooltip: 'Stop',
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              onPressed: controller.dismiss,
+              icon: const Icon(Icons.close),
+              tooltip: 'Close player',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class ExpertPage extends StatefulWidget {

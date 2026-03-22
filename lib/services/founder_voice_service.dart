@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class FounderVoiceReply {
@@ -10,6 +13,8 @@ class FounderVoiceReply {
   final String audioBase64;
   final String mimeType;
   final String voice;
+
+  Uint8List get bytes => base64Decode(audioBase64);
 }
 
 class FounderVoiceService {
