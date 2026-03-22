@@ -84,7 +84,7 @@ Deno.serve(async (request) => {
         input: text.slice(0, 3500),
         response_format: 'mp3',
         instructions:
-          'Speak as a calm, natural founder educator. Sound warm, clear, intelligent, and conversational, not robotic or overly theatrical.',
+          'Speak naturally and conversationally, like a smart human tutor talking in real time. Keep the pacing a little brisk, the tone clear and warm, and avoid sounding scripted, theatrical, or overly polished.',
       }),
     });
 

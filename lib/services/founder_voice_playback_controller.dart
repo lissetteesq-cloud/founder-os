@@ -18,7 +18,7 @@ class FounderVoicePlaybackController extends ChangeNotifier {
   final AudioPlayer _audioPlayer = AudioPlayer();
 
   Uint8List? _audioBytes;
-  String _voice = 'sage';
+  String _voice = 'nova';
   String _title = 'Tutor reply';
   bool _isVisible = false;
   bool _isLoading = false;

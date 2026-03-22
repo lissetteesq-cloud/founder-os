@@ -797,7 +797,7 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
   String? _error;
   String? _lastLessonId;
   TutorProvider _provider = TutorProvider.openAi;
-  String _selectedVoice = 'sage';
+  String _selectedVoice = 'nova';
 
   @override
   void initState() {
@@ -1644,6 +1644,7 @@ class _LessonReaderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final voicePlayback = FounderVoicePlaybackController.instance;
     final checks = content.selfCheckQuestions.isNotEmpty
         ? content.selfCheckQuestions
         : <String>[
@@ -1663,7 +1664,40 @@ class _LessonReaderCard extends StatelessWidget {
             ).textTheme.labelSmall?.copyWith(color: AppColors.accent),
           ),
           const SizedBox(height: 8),
-          Text(lesson.title, style: Theme.of(context).textTheme.headlineMedium),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  lesson.title,
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Listen to lesson',
+                onPressed: () async {
+                  final script = _buildLessonAudioScript(
+                    lesson: lesson,
+                    content: content,
+                  );
+                  await voicePlayback.loadReply(
+                    text: script,
+                    voice: voicePlayback.voice,
+                    title: lesson.title,
+                    autoPlay: false,
+                  );
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Lesson audio is ready in the top player.'),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.volume_up_outlined, size: 18),
+              ),
+            ],
+          ),
           const SizedBox(height: 8),
           Text(lesson.summary, style: Theme.of(context).textTheme.bodyMedium),
           const SizedBox(height: 12),
@@ -2004,6 +2038,31 @@ class _BulletSection extends StatelessWidget {
       ),
     );
   }
+}
+
+String _buildLessonAudioScript({
+  required Lesson lesson,
+  required LessonContent content,
+}) {
+  final steps = content.steps.take(4).join(' ');
+  final watchOuts = content.watchOuts.take(3).join(' ');
+
+  return '''
+Lesson: ${lesson.title}.
+
+Summary: ${lesson.summary}
+
+Concept: ${content.coreIdea}
+
+Why this matters: ${content.whyItMatters}
+
+What to do next: $steps
+
+Watch outs: $watchOuts
+
+Practice task: ${lesson.battleTask}
+'''
+      .trim();
 }
 
 class _MetricRow extends StatelessWidget {
