@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'config/supabase_config.dart';
@@ -21,9 +22,14 @@ Future<void> main() async {
 }
 
 class FounderOsApp extends StatelessWidget {
-  const FounderOsApp({super.key, required this.controller});
+  const FounderOsApp({
+    super.key,
+    required this.controller,
+    this.requireAuth = true,
+  });
 
   final FounderOsController controller;
+  final bool requireAuth;
 
   @override
   Widget build(BuildContext context) {
@@ -34,10 +40,195 @@ class FounderOsApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           title: 'Founder OS',
           theme: buildFounderTheme(),
-          home: FounderOsShell(controller: controller),
+          home: FounderOsAuthGate(
+            controller: controller,
+            requireAuth: requireAuth,
+          ),
         );
       },
     );
+  }
+}
+
+class FounderOsAuthGate extends StatelessWidget {
+  const FounderOsAuthGate({
+    super.key,
+    required this.controller,
+    required this.requireAuth,
+  });
+
+  final FounderOsController controller;
+  final bool requireAuth;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!requireAuth || !FounderOsSyncService.instance.isInitialized) {
+      return FounderOsShell(controller: controller);
+    }
+
+    final client = Supabase.instance.client;
+    return StreamBuilder<AuthState>(
+      stream: client.auth.onAuthStateChange,
+      initialData: AuthState(
+        AuthChangeEvent.initialSession,
+        client.auth.currentSession,
+      ),
+      builder: (context, snapshot) {
+        final session = snapshot.data?.session ?? client.auth.currentSession;
+        if (session == null) {
+          return const _AuthScreen();
+        }
+        return FounderOsShell(controller: controller);
+      },
+    );
+  }
+}
+
+class _AuthScreen extends StatefulWidget {
+  const _AuthScreen();
+
+  @override
+  State<_AuthScreen> createState() => _AuthScreenState();
+}
+
+class _AuthScreenState extends State<_AuthScreen> {
+  late final TextEditingController _emailController;
+  bool _isSending = false;
+  String? _error;
+  String? _success;
+
+  @override
+  void initState() {
+    super.initState();
+    _emailController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: _Panel(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.terminal, color: AppColors.success),
+                        const SizedBox(width: 10),
+                        Text(
+                          'FOUNDER_OS',
+                          style: Theme.of(context).textTheme.headlineMedium
+                              ?.copyWith(
+                                color: AppColors.success,
+                                fontWeight: FontWeight.w900,
+                              ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      'Sign in',
+                      style: Theme.of(context).textTheme.headlineMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Use your email and we will send you a magic link so only you can enter the app from the public URL.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      autofillHints: const [AutofillHints.email],
+                      decoration: const InputDecoration(
+                        labelText: 'Email',
+                        hintText: 'you@example.com',
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: _isSending ? null : _sendMagicLink,
+                        child: Text(
+                          _isSending ? 'Sending...' : 'Send magic link',
+                        ),
+                      ),
+                    ),
+                    if (_success != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _success!,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppColors.success,
+                        ),
+                      ),
+                    ],
+                    if (_error != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _error!,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppColors.critical,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sendMagicLink() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      setState(() {
+        _error = 'Enter your email first.';
+        _success = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _isSending = true;
+      _error = null;
+      _success = null;
+    });
+
+    try {
+      await Supabase.instance.client.auth.signInWithOtp(
+        email: email,
+        emailRedirectTo: Uri.base.toString(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _isSending = false;
+        _success =
+            'Magic link sent. Open the email on this device and come back here after signing in.';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isSending = false;
+        _error = 'Sign-in failed: $error';
+      });
+    }
   }
 }
 
@@ -110,6 +301,14 @@ class _FounderOsShellState extends State<FounderOsShell> {
               ),
             ),
           ),
+          if (FounderOsSyncService.instance.isInitialized)
+            IconButton(
+              tooltip: 'Sign out',
+              onPressed: () async {
+                await Supabase.instance.client.auth.signOut();
+              },
+              icon: const Icon(Icons.logout),
+            ),
         ],
       ),
       body: Stack(

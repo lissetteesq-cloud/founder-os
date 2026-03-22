@@ -9,7 +9,9 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final controller = await FounderOsController.load(enableRemoteSync: false);
 
-    await tester.pumpWidget(FounderOsApp(controller: controller));
+    await tester.pumpWidget(
+      FounderOsApp(controller: controller, requireAuth: false),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('PROJECT_IDENTIFIER'), findsOneWidget);
