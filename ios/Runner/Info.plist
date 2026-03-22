@@ -45,5 +45,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Founder OS uses the microphone so you can talk to your tutor instead of typing.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Founder OS uses speech recognition so you can dictate questions to your tutor.</string>
 </dict>
 </plist>

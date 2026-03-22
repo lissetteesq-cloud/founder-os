@@ -2,6 +2,15 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 enum TutorProvider { openAi, gemini }
 
+class TutorConversationTurn {
+  const TutorConversationTurn({required this.role, required this.text});
+
+  final String role;
+  final String text;
+
+  Map<String, dynamic> toJson() => {'role': role, 'text': text};
+}
+
 extension TutorProviderLabel on TutorProvider {
   String get label => switch (this) {
     TutorProvider.openAi => 'OpenAI',
@@ -33,6 +42,9 @@ class FounderTutorRequest {
     required this.todayExecutionTask,
     required this.completedTaskCount,
     required this.overallProgress,
+    required this.appUrl,
+    required this.repoUrl,
+    required this.conversationHistory,
   });
 
   final TutorProvider provider;
@@ -52,6 +64,9 @@ class FounderTutorRequest {
   final String todayExecutionTask;
   final int completedTaskCount;
   final double overallProgress;
+  final String appUrl;
+  final String repoUrl;
+  final List<TutorConversationTurn> conversationHistory;
 
   Map<String, dynamic> toJson() {
     return {
@@ -72,6 +87,11 @@ class FounderTutorRequest {
       'todayExecutionTask': todayExecutionTask,
       'completedTaskCount': completedTaskCount,
       'overallProgress': overallProgress,
+      'appUrl': appUrl,
+      'repoUrl': repoUrl,
+      'conversationHistory': conversationHistory
+          .map((turn) => turn.toJson())
+          .toList(growable: false),
     };
   }
 }

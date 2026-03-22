@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'config/supabase_config.dart';
 import 'data/lesson_content.dart';
 import 'models/founder_models.dart';
+import 'services/chat_export_service.dart';
 import 'services/founder_os_sync_service.dart';
 import 'services/founder_tutor_service.dart';
 import 'state/founder_os_controller.dart';
@@ -758,9 +762,14 @@ class _TutorConversationPanel extends StatefulWidget {
 
 class _TutorConversationPanelState extends State<_TutorConversationPanel> {
   final FounderTutorService _tutorService = const FounderTutorService();
+  final SpeechToText _speechToText = SpeechToText();
+  final FlutterTts _tts = FlutterTts();
   final List<_TutorMessage> _messages = <_TutorMessage>[];
   late final TextEditingController _promptController;
   bool _isSending = false;
+  bool _speechReady = false;
+  bool _isListening = false;
+  bool _autoReadReplies = false;
   String? _error;
   String? _lastLessonId;
   TutorProvider _provider = TutorProvider.openAi;
@@ -769,10 +778,13 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
   void initState() {
     super.initState();
     _promptController = TextEditingController();
+    _initializeVoice();
   }
 
   @override
   void dispose() {
+    _speechToText.stop();
+    _tts.stop();
     _promptController.dispose();
     super.dispose();
   }
@@ -782,7 +794,7 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
     if (_lastLessonId != widget.lesson.id ||
         _promptController.text.trim().isEmpty) {
       final starter =
-          'Explain "${widget.lesson.title}" to me in plain English and tell me how it applies to LunarWise right now.';
+          'Explain "${widget.lesson.title}" to me in plain English, then tell me what I should do in LunarWise right now.';
       _lastLessonId = widget.lesson.id;
       _promptController.value = TextEditingValue(
         text: starter,
@@ -794,6 +806,11 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
 
     final promptChips = <String>[
       'Explain this lesson simply.',
+      'Search my app and tell me what you find.',
+      'Review my app homepage and tell me what is weak.',
+      'Run an SEO audit on my app.',
+      'Generate 10 hooks for this stage.',
+      'Analyze this data for me:',
       'How does this apply to LunarWise?',
       'What should I do next?',
       'Define the jargon in this lesson.',
@@ -806,6 +823,16 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
           Text(widget.title, style: Theme.of(context).textTheme.labelSmall),
           const SizedBox(height: 8),
           Text(widget.intro, style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 12),
+          Text(
+            'Live app: ${SupabaseConfig.appUrl}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Repo: ${SupabaseConfig.repoUrl}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
           const SizedBox(height: 12),
           _MetricRow(
             label: 'Stage',
@@ -832,11 +859,16 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
           const SizedBox(height: 8),
           Text(
             _provider == TutorProvider.openAi
-                ? 'Use OpenAI for reasoning, logic, and structured founder guidance.'
-                : 'Use Gemini for distribution, messaging, channel thinking, and creative support with the same lesson context.',
+                ? 'Use OpenAI for reasoning, logic, app review, structured decision support, and implementation analysis.'
+                : 'Use Gemini for distribution, SEO, hooks, messaging, channel thinking, and creative support with the same lesson and app context.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
+          Text(
+            'Command shortcuts',
+            style: Theme.of(context).textTheme.labelSmall,
+          ),
+          const SizedBox(height: 8),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -850,6 +882,9 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
                         selection: TextSelection.collapsed(
                           offset: prompt.length,
                         ),
+                      );
+                      _promptController.selection = TextSelection.collapsed(
+                        offset: _promptController.text.length,
                       );
                     },
                   ),
@@ -877,7 +912,7 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  widget.content.whyItMatters,
+                  'The agent can use your lesson context, your live app URL, your repo URL, public web research, and recent chat turns. It should treat commands like "search my app", "review my app", "run an SEO audit", "generate hooks", and "analyze this data" as commands, not as generic tutoring prompts.',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 if (_messages.isNotEmpty) ...[
@@ -939,41 +974,122 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
           TextField(
             controller: _promptController,
             minLines: 2,
-            maxLines: 6,
-            decoration: const InputDecoration(
+            maxLines: 8,
+            decoration: InputDecoration(
               hintText:
-                  'Ask anything about this lesson, the founder process, LunarWise, or your next move.',
+                  'Ask anything. Examples: "search my app", "review my homepage", "run an SEO audit", "generate 15 hooks", "analyze this data: ..."',
+              suffixIcon: IconButton(
+                onPressed: _speechReady ? _toggleListening : null,
+                icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
+                tooltip: _isListening ? 'Stop dictation' : 'Start dictation',
+              ),
             ),
           ),
           const SizedBox(height: 12),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => _copyPrompt(context),
-                  child: const Text('Copy Prompt'),
-                ),
+              OutlinedButton.icon(
+                onPressed: () => _copyPrompt(context),
+                icon: const Icon(Icons.content_copy),
+                label: const Text('Copy Prompt'),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton(
-                  onPressed: _isSending ? null : _askTutor,
-                  child: Text(_isSending ? 'Thinking...' : 'Ask Tutor'),
-                ),
+              OutlinedButton.icon(
+                onPressed: _messages.isEmpty
+                    ? null
+                    : () => _exportConversation(context),
+                icon: const Icon(Icons.download_outlined),
+                label: const Text('Export Chat'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _messages.any((message) => !message.isUser)
+                    ? _speakLatestReply
+                    : null,
+                icon: const Icon(Icons.volume_up_outlined),
+                label: const Text('Read Reply'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _stopVoice,
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: const Text('Stop Voice'),
+              ),
+              FilterChip(
+                label: const Text('Auto-read replies'),
+                selected: _autoReadReplies,
+                onSelected: (value) {
+                  setState(() {
+                    _autoReadReplies = value;
+                  });
+                },
+              ),
+              FilledButton.icon(
+                onPressed: _isSending ? null : _askTutor,
+                icon: const Icon(Icons.send),
+                label: Text(_isSending ? 'Thinking...' : 'Ask Tutor'),
               ),
             ],
           ),
           const SizedBox(height: 8),
           SizedBox(
             width: double.infinity,
-            child: OutlinedButton(
-              onPressed: () => _openUrl('https://gemini.google.com/app'),
-              child: const Text('Open Gemini For Creative Work'),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton(
+                  onPressed: () => _openUrl(SupabaseConfig.appUrl),
+                  child: const Text('Open Live App'),
+                ),
+                OutlinedButton(
+                  onPressed: () => _openUrl(SupabaseConfig.repoUrl),
+                  child: const Text('Open Repo'),
+                ),
+                OutlinedButton(
+                  onPressed: () => _openUrl('https://gemini.google.com/app'),
+                  child: const Text('Open Gemini External'),
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _initializeVoice() async {
+    try {
+      final ready = await _speechToText.initialize(
+        onStatus: (status) {
+          if (!mounted) return;
+          if (status == 'done' || status == 'notListening') {
+            setState(() {
+              _isListening = false;
+            });
+          }
+        },
+        onError: (error) {
+          if (!mounted) return;
+          setState(() {
+            _isListening = false;
+            _error = 'Voice input failed: ${error.errorMsg}';
+          });
+        },
+      );
+      await _tts.setLanguage('en-US');
+      await _tts.setSpeechRate(0.45);
+      await _tts.setPitch(1.0);
+      await _tts.awaitSpeakCompletion(true);
+      if (!mounted) return;
+      setState(() {
+        _speechReady = ready;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Voice tools failed to initialize. $error';
+      });
+    }
   }
 
   Future<void> _copyPrompt(BuildContext context) async {
@@ -984,6 +1100,115 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Prompt copied')));
+  }
+
+  Future<void> _toggleListening() async {
+    if (!_speechReady) {
+      setState(() {
+        _error = 'Speech input is not available on this device/browser.';
+      });
+      return;
+    }
+
+    if (_isListening) {
+      await _speechToText.stop();
+      if (!mounted) return;
+      setState(() {
+        _isListening = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _error = null;
+      _isListening = true;
+    });
+
+    await _speechToText.listen(
+      listenOptions: SpeechListenOptions(
+        partialResults: true,
+        listenMode: ListenMode.dictation,
+      ),
+      onResult: (result) {
+        if (!mounted) return;
+        final recognized = result.recognizedWords.trim();
+        if (recognized.isEmpty) return;
+        setState(() {
+          _promptController.value = TextEditingValue(
+            text: recognized,
+            selection: TextSelection.collapsed(offset: recognized.length),
+          );
+        });
+      },
+    );
+  }
+
+  Future<void> _speakLatestReply() async {
+    final latestReply = _messages.lastWhere(
+      (message) => !message.isUser,
+      orElse: () => const _TutorMessage(role: 'assistant', text: ''),
+    );
+    if (latestReply.text.trim().isEmpty) return;
+    await _tts.stop();
+    await _tts.speak(latestReply.text);
+  }
+
+  Future<void> _stopVoice() async {
+    await _speechToText.stop();
+    await _tts.stop();
+    if (!mounted) return;
+    setState(() {
+      _isListening = false;
+    });
+  }
+
+  String _buildTranscriptMarkdown() {
+    final buffer = StringBuffer()
+      ..writeln('# Founder OS Tutor Transcript')
+      ..writeln()
+      ..writeln('- Project: LunarWise')
+      ..writeln('- Live app: ${SupabaseConfig.appUrl}')
+      ..writeln('- Repo: ${SupabaseConfig.repoUrl}')
+      ..writeln('- Stage: ${widget.controller.currentStage.title}')
+      ..writeln('- Module: ${widget.module.title}')
+      ..writeln('- Lesson: ${widget.lesson.title}')
+      ..writeln('- Provider: ${_provider.label}')
+      ..writeln()
+      ..writeln('## Conversation')
+      ..writeln();
+
+    for (final message in _messages) {
+      buffer
+        ..writeln('### ${message.isUser ? 'You' : 'Tutor'}')
+        ..writeln()
+        ..writeln(message.text)
+        ..writeln();
+    }
+
+    return buffer.toString();
+  }
+
+  Future<void> _exportConversation(BuildContext context) async {
+    try {
+      final timestamp = DateTime.now()
+          .toIso8601String()
+          .replaceAll(':', '-')
+          .replaceAll('.', '-');
+      final filename = 'founder-os-tutor-$timestamp.md';
+      final result = await exportTranscript(
+        filename: filename,
+        contents: _buildTranscriptMarkdown(),
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Transcript exported: $result')));
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Transcript export failed: $error')),
+      );
+    }
   }
 
   Future<void> _askTutor() async {
@@ -1016,6 +1241,16 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
           todayExecutionTask: widget.controller.todayExecutionTask,
           completedTaskCount: widget.controller.completedTaskCount,
           overallProgress: widget.controller.overallProgress,
+          appUrl: SupabaseConfig.appUrl,
+          repoUrl: SupabaseConfig.repoUrl,
+          conversationHistory: _messages
+              .map(
+                (message) => TutorConversationTurn(
+                  role: message.role,
+                  text: message.text,
+                ),
+              )
+              .toList(growable: false),
         ),
       );
 
@@ -1029,12 +1264,15 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
         );
         _isSending = false;
       });
+      if (_autoReadReplies) {
+        await _speakLatestReply();
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _isSending = false;
         _error =
-            'The founder tutor could not answer right now. Check that the Supabase function is deployed and the OPENAI_API_KEY secret is present. Technical detail: $error';
+            'The founder tutor could not answer right now. Check that the Supabase function is deployed and that the needed provider secret exists. Technical detail: $error';
       });
     }
   }

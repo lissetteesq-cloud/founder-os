@@ -7,4 +7,6 @@ class SupabaseConfig {
 
   static const workspaceSlug = 'lunarwise';
   static const workspaceName = 'LunarWise';
+  static const appUrl = 'https://lissetteesq-cloud.github.io/founder-os/';
+  static const repoUrl = 'https://github.com/lissetteesq-cloud/founder-os';
 }

@@ -22,6 +22,19 @@ type TutorRequest = {
   todayExecutionTask?: string;
   completedTaskCount?: number;
   overallProgress?: number;
+  appUrl?: string;
+  repoUrl?: string;
+  conversationHistory?: Array<{ role?: string; text?: string }>;
+};
+
+type CommandModes = {
+  appInspection: boolean;
+  seo: boolean;
+  hooks: boolean;
+  dataAnalysis: boolean;
+  competitorReview: boolean;
+  generate: boolean;
+  search: boolean;
 };
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -36,9 +49,85 @@ function extractUrls(text: string) {
 }
 
 function shouldSearchWeb(text: string) {
-  return /(latest|recent|today|current|trend|trends|market|competitor|research|look up|find|search|review this page|analyze this page|analyze this link)/i.test(
+  return /(latest|recent|today|current|trend|trends|market|competitor|research|look up|find|search|review this page|analyze this page|analyze this link|seo|hook|headline|copy|analyze data|app review|review my app|search my app|compare my app)/i.test(
     text,
   );
+}
+
+function detectCommandModes(text: string): CommandModes {
+  return {
+    appInspection:
+      /(my app|lunarwise|review my app|search my app|analyze my app|analyze my homepage|review my homepage|homepage|landing page|live app|site\b)/i.test(
+        text,
+      ),
+    seo:
+      /\bseo\b|search engine optimization|keyword|meta title|meta description|organic search|search rankings|technical seo/i.test(
+        text,
+      ),
+    hooks:
+      /hooks?\b|headline|headlines|angles?\b|ad copy|copy ideas|creative ideas|content ideas|positioning/i.test(
+        text,
+      ),
+    dataAnalysis:
+      /analy[sz]e (this )?data|dataset|csv|spreadsheet|table|numbers|metrics|funnel data|cohort|retention|conversion data/i.test(
+        text,
+      ),
+    competitorReview:
+      /competitor|competitors|compare|comparison|benchmark|alternatives?/i.test(
+        text,
+      ),
+    generate:
+      /generate|draft|write|create|produce/i.test(text),
+    search:
+      /search|find|look up|research|latest|recent|current/i.test(text),
+  };
+}
+
+function safeUrl(value?: string) {
+  if (!value) return '';
+  try {
+    return new URL(value).toString();
+  } catch (_) {
+    return '';
+  }
+}
+
+function buildSearchQueries(
+  question: string,
+  projectName: string,
+  appUrl: string,
+  modes: CommandModes,
+) {
+  const queries = new Set<string>();
+  queries.add(question);
+
+  if (modes.appInspection || modes.search) {
+    queries.add(`${projectName} app`);
+  }
+
+  if (modes.seo) {
+    queries.add(`${projectName} SEO review`);
+    queries.add(`${projectName} organic search competitors`);
+  }
+
+  if (modes.hooks) {
+    queries.add(`${projectName} marketing positioning examples`);
+  }
+
+  if (modes.competitorReview) {
+    queries.add(`${projectName} competitors alternatives`);
+  }
+
+  if (appUrl) {
+    try {
+      const parsed = new URL(appUrl);
+      queries.add(`site:${parsed.hostname} ${projectName}`);
+    } catch (_) {
+      // Ignore invalid app URL.
+    }
+  }
+
+  return [...queries].slice(0, 4);
 }
 
 function cleanText(raw: string) {
@@ -114,6 +203,14 @@ async function searchWeb(query: string) {
       },
     ];
   }
+}
+
+async function gatherSearchContext(queries: string[]) {
+  const results = await Promise.all(queries.map((query) => searchWeb(query)));
+  return queries.map((query, index) => ({
+    query,
+    results: results[index],
+  }));
 }
 
 async function callOpenAi(
@@ -210,7 +307,7 @@ Deno.serve(async (request) => {
     }
 
     const systemPrompt = `
-You are Founder OS Tutor, an in-app founder education tutor.
+You are Founder OS Tutor, an in-app founder education tutor and execution agent.
 
 Your job:
 - teach in plain English
@@ -218,6 +315,9 @@ Your job:
 - answer like a rigorous but practical founder instructor
 - tie every answer to the user's current module, current lesson, and current project
 - prioritize reasoning, sequencing, judgment, and next-step clarity
+- when the user gives a command, execute the command with the provided tools and inspected context before teaching
+- treat "my app" as the user's deployed app URL when available
+- treat "my repo" as the linked GitHub repository when available
 
 Output rules:
 - do not sound like marketing copy
@@ -228,6 +328,11 @@ Output rules:
 - if the user seems confused, simplify rather than adding more jargon
 - keep the answer specific to the current lesson and to the project context
 - do not mention that you are an AI model
+- do not ignore command words like search, review, analyze, audit, compare, generate, or inspect
+- if you inspected URLs or search results, say exactly what you inspected
+- if the user asks for SEO, include: findings, why each issue matters, and prioritized fixes
+- if the user asks for hooks or copy, produce multiple options instead of one
+- if the user asks for data analysis, summarize assumptions, observed patterns, and recommended actions
 `.trim();
 
     const providerInstruction =
@@ -244,19 +349,58 @@ Additional style for OpenAI mode:
 - focus on decision quality, sequencing, tradeoffs, and judgment
 `.trim();
 
+    const modes = detectCommandModes(question);
+    const appUrl = safeUrl(body.appUrl);
+    const repoUrl = safeUrl(body.repoUrl);
     const linkedUrls = extractUrls(question);
+    const fetchedUrlSet = new Set<string>(linkedUrls.slice(0, 3));
+
+    if (modes.appInspection && appUrl) {
+      fetchedUrlSet.add(appUrl);
+    }
+
+    if (
+      /repo|repository|github|codebase|source code/i.test(question) &&
+      repoUrl
+    ) {
+      fetchedUrlSet.add(repoUrl);
+    }
+
     const fetchedContexts = await Promise.all(
-      linkedUrls.slice(0, 3).map((url) => fetchUrlContext(url)),
+      [...fetchedUrlSet].slice(0, 3).map((url) => fetchUrlContext(url)),
     );
-    const searchResults = shouldSearchWeb(question)
-      ? await searchWeb(question)
+    const searchContexts = shouldSearchWeb(question)
+      ? await gatherSearchContext(
+          buildSearchQueries(
+            question,
+            body.projectName ?? 'Unknown project',
+            appUrl,
+            modes,
+          ),
+        )
       : [];
+
+    const conversationHistory = (body.conversationHistory ?? [])
+      .map((turn) => ({
+        role: turn.role === 'assistant' ? 'assistant' : 'user',
+        text: cleanText(turn.text ?? ''),
+      }))
+      .filter((turn) => turn.text.length > 0)
+      .slice(-8);
 
     const webContext = `
 Internet context:
-${searchResults.length > 0 ? `Search results:\n${searchResults
-      .map((entry, index) => `${index + 1}. ${entry.title} ${entry.url}`.trim())
-      .join('\n')}` : 'Search results: none'}
+${searchContexts.length > 0 ? `Search results:\n${searchContexts
+      .map(
+        (context, index) =>
+          `${index + 1}. Query: ${context.query}\n${context.results
+            .map(
+              (entry, entryIndex) =>
+                `  ${entryIndex + 1}. ${entry.title} ${entry.url}`.trim(),
+            )
+            .join('\n')}`,
+      )
+      .join('\n\n')}` : 'Search results: none'}
 
 ${fetchedContexts.length > 0 ? `Fetched links:\n${fetchedContexts
       .map(
@@ -264,6 +408,30 @@ ${fetchedContexts.length > 0 ? `Fetched links:\n${fetchedContexts
           `${index + 1}. ${entry.url}\nStatus: ${entry.status}\nExtracted text: ${entry.text}`,
       )
       .join('\n\n')}` : 'Fetched links: none'}
+`.trim();
+
+    const commandContext = `
+Command routing:
+- appInspection: ${modes.appInspection}
+- seo: ${modes.seo}
+- hooks: ${modes.hooks}
+- dataAnalysis: ${modes.dataAnalysis}
+- competitorReview: ${modes.competitorReview}
+- generate: ${modes.generate}
+- search: ${modes.search}
+
+Known app URL:
+${appUrl || 'none'}
+
+Known repo URL:
+${repoUrl || 'none'}
+`.trim();
+
+    const historyContext = `
+Recent conversation:
+${conversationHistory.length > 0 ? conversationHistory
+      .map((turn) => `${turn.role.toUpperCase()}: ${turn.text}`)
+      .join('\n\n') : 'No prior turns.'}
 `.trim();
 
     const userPrompt = `
@@ -303,6 +471,10 @@ ${body.completedTaskCount ?? 0}
 
 Overall progress:
 ${((body.overallProgress ?? 0) * 100).toFixed(1)}%
+
+${commandContext}
+
+${historyContext}
 
 ${webContext}
 
