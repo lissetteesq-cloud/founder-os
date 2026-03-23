@@ -1555,7 +1555,13 @@ class _TutorConversationPanelState extends State<_TutorConversationPanel> {
           text: '[${_provider.label}] ${reply.answer}',
           voice: _selectedVoice,
           title: 'Tutor reply',
-          autoPlay: true,
+          autoPlay: false,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Reply audio is ready in the top player.'),
+          ),
         );
       }
     } catch (error) {
