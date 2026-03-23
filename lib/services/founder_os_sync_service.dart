@@ -24,11 +24,60 @@ class FounderOsSyncService {
       await Supabase.initialize(
         url: SupabaseConfig.url,
         anonKey: SupabaseConfig.anonKey,
+        authOptions: const FlutterAuthClientOptions(
+          detectSessionInUri: true,
+        ),
       );
+      await _consumeReturnedAuthLink();
       _initialized = true;
     } catch (error, stackTrace) {
       debugPrint('Founder OS Supabase init failed: $error');
       debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
+  Future<void> _consumeReturnedAuthLink() async {
+    final uri = Uri.base;
+    final client = Supabase.instance.client.auth;
+
+    try {
+      if (uri.queryParameters.containsKey('code') ||
+          uri.fragment.contains('access_token') ||
+          uri.fragment.contains('error_description')) {
+        await client.getSessionFromUrl(uri);
+        return;
+      }
+
+      final tokenHash = uri.queryParameters['token_hash'];
+      if (tokenHash == null || tokenHash.isEmpty) {
+        return;
+      }
+
+      await client.verifyOTP(
+        tokenHash: tokenHash,
+        type: _otpTypeFromQuery(uri.queryParameters['type']),
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Founder OS auth callback handling failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
+  OtpType _otpTypeFromQuery(String? rawType) {
+    switch (rawType?.toLowerCase()) {
+      case 'signup':
+        return OtpType.signup;
+      case 'invite':
+        return OtpType.invite;
+      case 'recovery':
+        return OtpType.recovery;
+      case 'email':
+        return OtpType.email;
+      case 'email_change':
+        return OtpType.emailChange;
+      case 'magiclink':
+      default:
+        return OtpType.magiclink;
     }
   }
 
