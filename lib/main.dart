@@ -214,7 +214,7 @@ class _AuthScreenState extends State<_AuthScreen> {
     try {
       await Supabase.instance.client.auth.signInWithOtp(
         email: email,
-        emailRedirectTo: Uri.base.toString(),
+        emailRedirectTo: SupabaseConfig.appUrl,
       );
       if (!mounted) return;
       setState(() {
