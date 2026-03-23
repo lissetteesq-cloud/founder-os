@@ -1843,7 +1843,6 @@ class _LessonReaderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final voicePlayback = FounderVoicePlaybackController.instance;
     final checks = content.selfCheckQuestions.isNotEmpty
         ? content.selfCheckQuestions
         : <String>[
@@ -1871,29 +1870,6 @@ class _LessonReaderCard extends StatelessWidget {
                   lesson.title,
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                tooltip: 'Listen to lesson',
-                onPressed: () async {
-                  final script = _buildLessonAudioScript(
-                    lesson: lesson,
-                    content: content,
-                  );
-                  await voicePlayback.loadReply(
-                    text: script,
-                    voice: voicePlayback.voice,
-                    title: lesson.title,
-                    autoPlay: false,
-                  );
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Lesson audio is ready in the top player.'),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.volume_up_outlined, size: 18),
               ),
             ],
           ),
@@ -2149,12 +2125,16 @@ class _GlossaryTermsBlock extends StatelessWidget {
       );
     }
 
+    final audioBody = resolved
+        .map((term) => '${term.term}: ${term.definition}')
+        .join('\n\n');
+
     return _Panel(
       background: AppColors.inset,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: Theme.of(context).textTheme.labelSmall),
+          _SectionHeader(title: title, audioBody: audioBody),
           const SizedBox(height: 8),
           ...resolved.map(
             (term) => Padding(
@@ -2194,7 +2174,7 @@ class _DetailBlock extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: Theme.of(context).textTheme.labelSmall),
+          _SectionHeader(title: title, audioBody: body),
           const SizedBox(height: 6),
           Text(body),
         ],
@@ -2211,12 +2191,14 @@ class _BulletSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final audioBody = items.map((item) => '- $item').join('\n');
+
     return _Panel(
       background: AppColors.inset,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: Theme.of(context).textTheme.labelSmall),
+          _SectionHeader(title: title, audioBody: audioBody),
           const SizedBox(height: 8),
           ...items.map(
             (item) => Padding(
@@ -2239,29 +2221,57 @@ class _BulletSection extends StatelessWidget {
   }
 }
 
-String _buildLessonAudioScript({
-  required Lesson lesson,
-  required LessonContent content,
-}) {
-  final steps = content.steps.take(4).join(' ');
-  final watchOuts = content.watchOuts.take(3).join(' ');
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, required this.audioBody});
 
-  return '''
-Lesson: ${lesson.title}.
+  final String title;
+  final String audioBody;
 
-Summary: ${lesson.summary}
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Text(title, style: Theme.of(context).textTheme.labelSmall),
+        ),
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          tooltip: 'Listen to section',
+          onPressed: () => _queueAudioSection(
+            context: context,
+            title: title,
+            body: audioBody,
+          ),
+          icon: const Icon(Icons.volume_up_outlined, size: 16),
+        ),
+      ],
+    );
+  }
+}
 
-Concept: ${content.coreIdea}
+Future<void> _queueAudioSection({
+  required BuildContext context,
+  required String title,
+  required String body,
+}) async {
+  final voicePlayback = FounderVoicePlaybackController.instance;
+  final script = '$title.\n\n$body'.trim();
 
-Why this matters: ${content.whyItMatters}
+  await voicePlayback.loadReply(
+    text: script,
+    voice: voicePlayback.voice,
+    title: title,
+    autoPlay: false,
+  );
 
-What to do next: $steps
+  if (!context.mounted) {
+    return;
+  }
 
-Watch outs: $watchOuts
-
-Practice task: ${lesson.battleTask}
-'''
-      .trim();
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text('$title audio is ready in the top player.')),
+  );
 }
 
 class _MetricRow extends StatelessWidget {
