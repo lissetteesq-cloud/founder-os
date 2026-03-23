@@ -1,23 +1,26 @@
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 
+import 'founder_voice_player.dart';
 import 'founder_voice_service.dart';
 
 class FounderVoicePlaybackController extends ChangeNotifier {
   FounderVoicePlaybackController._() {
-    _audioPlayer.onPlayerComplete.listen((_) {
-      _isPlaying = false;
-      notifyListeners();
-    });
+    _player = createVoicePlayer(onComplete: _handlePlaybackComplete);
   }
 
   static final FounderVoicePlaybackController instance =
       FounderVoicePlaybackController._();
 
   final FounderVoiceService _voiceService = const FounderVoiceService();
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  late final FounderVoicePlayer _player;
+
+  void _handlePlaybackComplete() {
+      _isPlaying = false;
+      notifyListeners();
+  }
 
   Uint8List? _audioBytes;
+  String _mimeType = 'audio/mpeg';
   String _voice = 'nova';
   String _title = 'Tutor reply';
   bool _isVisible = false;
@@ -50,6 +53,7 @@ class FounderVoicePlaybackController extends ChangeNotifier {
     try {
       final reply = await _voiceService.synthesize(text: text, voice: voice);
       _audioBytes = Uint8List.fromList(reply.bytes);
+      _mimeType = reply.mimeType;
       _voice = reply.voice;
       _hasStartedPlayback = false;
       _isLoading = false;
@@ -77,9 +81,9 @@ class FounderVoicePlaybackController extends ChangeNotifier {
       }
 
       if (_hasStartedPlayback) {
-        await _audioPlayer.resume();
+        await _player.resume();
       } else {
-        await _audioPlayer.play(BytesSource(_audioBytes!));
+        await _player.playBytes(_audioBytes!, mimeType: _mimeType);
         _hasStartedPlayback = true;
       }
       _isPlaying = true;
@@ -93,7 +97,7 @@ class FounderVoicePlaybackController extends ChangeNotifier {
 
   Future<void> pause() async {
     try {
-      await _audioPlayer.pause();
+      await _player.pause();
     } finally {
       _isPlaying = false;
       notifyListeners();
@@ -102,7 +106,7 @@ class FounderVoicePlaybackController extends ChangeNotifier {
 
   Future<void> stop() async {
     try {
-      await _audioPlayer.stop();
+      await _player.stop();
     } finally {
       _isPlaying = false;
       _hasStartedPlayback = false;
@@ -114,8 +118,8 @@ class FounderVoicePlaybackController extends ChangeNotifier {
     if (_audioBytes == null) return;
     _error = null;
     try {
-      await _audioPlayer.stop();
-      await _audioPlayer.play(BytesSource(_audioBytes!));
+      await _player.stop();
+      await _player.playBytes(_audioBytes!, mimeType: _mimeType);
       _hasStartedPlayback = true;
       _isPlaying = true;
       notifyListeners();
