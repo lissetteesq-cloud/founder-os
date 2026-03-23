@@ -25,7 +25,7 @@ class FounderOsApp extends StatelessWidget {
   const FounderOsApp({
     super.key,
     required this.controller,
-    this.requireAuth = true,
+    this.requireAuth = false,
   });
 
   final FounderOsController controller;
@@ -1636,7 +1636,7 @@ class _VoicePlayerPill extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     controller.error != null
-                        ? 'Playback blocked or failed. Press play to retry.'
+                        ? controller.error!
                         : controller.isLoading
                         ? 'Generating ${controller.voice} voice audio...'
                         : 'Voice: ${controller.voice}',

@@ -30,6 +30,17 @@ class FounderVoiceService {
     );
 
     final data = response.data;
+    if (data is Map<String, dynamic>) {
+      final error = data['error'];
+      final details = data['details'];
+      if (error is String && error.isNotEmpty) {
+        final detailText = details is String && details.isNotEmpty
+            ? ' $details'
+            : '';
+        throw Exception('$error$detailText');
+      }
+    }
+
     if (data is! Map<String, dynamic>) {
       throw const FormatException('Voice response was not valid JSON.');
     }
